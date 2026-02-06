@@ -53,6 +53,9 @@ def classify(detections):
 
     return "SAFE"
 
+@app.get("/")
+def health():
+    return {"status": "API is running"}
 
 @app.post("/detect")
 async def detect_images(files: List[UploadFile] = File(...)):
