@@ -8,6 +8,8 @@ import cv2
 
 app = FastAPI(title="NudeNet Detection API")
 
+print("🔥🔥 NEW CODE IS RUNNING 🔥🔥")
+
 detector = NudeDetector()
 
 UPLOAD_DIR = "uploads"
