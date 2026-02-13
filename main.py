@@ -1,14 +1,27 @@
-from fastapi import FastAPI, UploadFile, File
 from typing import List
 from nudenet import NudeDetector
 from PIL import Image
 import uuid
 import os
 import cv2
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
+
 
 app = FastAPI(title="NudeNet Detection API")
 
-print("🔥🔥 NEW CODE IS RUNNING 🔥🔥")
+# print("🔥🔥 NEW CODE IS RUNNING 🔥🔥")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": False,
+            "message": str(exc),
+        }
+    )
 
 detector = NudeDetector()
 
@@ -62,30 +75,62 @@ def health():
 
 @app.post("/image-detect")
 async def detect_images(files: List[UploadFile] = File(...)):
+    if not files:
+        return {
+            "status": False,
+            "message": "No files uploaded",
+            "results": []
+        }
+    
+    for file in files:
+        if not file.filename:
+            return {
+                "status": False,
+                "message": "No image uploaded"
+            }
+    if not file.content_type or not file.content_type.startswith("image/"):
+            return {
+                "status": False,
+                "message": "Only image files are allowed"
+            }
+
     results = []
 
     for file in files:
         image_id = f"{uuid.uuid4()}.jpg"
         path = os.path.join(UPLOAD_DIR, image_id)
 
-        # Save uploaded image
-        image = Image.open(file.file).convert("RGB")
-        image.save(path)
+        try:
+            image = Image.open(file.file).convert("RGB")
+            image.save(path)
 
-        # Detect nudity
-        detections = detector.detect(path)
-        category = classify(detections)
+            detections = detector.detect(path)
+            category = classify(detections)
 
-        # Delete immediately after processing
-        os.remove(path)
+            results.append({
+                "id": image_id,
+                "filename": file.filename,
+                "status": True,
+                "category": category,
+                "detections": detections
+            })
 
-        results.append({
-            "id": image_id,
-            "category": category,
-            "detections": detections
-        })
+        except Exception as e:
+            results.append({
+                "status": False,
+                "message": str(e)
+            })
 
-    return {"count": len(results), "results": results}
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+
+    return {
+        "status": True,
+        "count": len(results),
+        "results": results
+    }
+
 def classify_video(detections):
     if not isinstance(detections, list):
         return "SAFE"
@@ -189,8 +234,34 @@ def detect_video(video_path, frame_rate=1):
 # --- Video detection endpoint ---
 @app.post("/video-detect")
 async def detect_video_endpoint(files: List[UploadFile] = File(...)):
+
     if not files:
-        raise HTTPException(status_code=400, detail="No files uploaded")
+        return {
+            "status": False,
+            "message": "No video uploaded"
+        }
+
+    for file in files:
+        # 🚫 no file selected
+        if not file.filename:
+            return {
+                "status": False,
+                "message": "No video uploaded"
+            }
+
+        # 🚫 wrong extension
+        if not file.filename.lower().endswith(".mp4"):
+            return {
+                "status": False,
+                "message": "Only MP4 videos are allowed"
+            }
+
+        # 🚫 wrong mime type
+        if file.content_type != "video/mp4":
+            return {
+                "status": False,
+                "message": "Invalid video content type"
+            }
 
     results = []
 
@@ -199,11 +270,9 @@ async def detect_video_endpoint(files: List[UploadFile] = File(...)):
         path = os.path.join(UPLOAD_DIR, video_id)
 
         try:
-            # Save video
             with open(path, "wb") as f:
                 f.write(await upload.read())
 
-            # ✅ CALL detect_video (NOT classify_video)
             result = detect_video(path)
 
             results.append({
@@ -214,18 +283,18 @@ async def detect_video_endpoint(files: List[UploadFile] = File(...)):
                 "scores": result["scores"]
             })
 
-        except Exception as e:
-            results.append({
-                "id": video_id,
-                "filename": upload.filename,
-                "error": str(e)
-            })
+        except Exception:
+            return {
+                "status": False,
+                "message": "Invalid or corrupted video file"
+            }
 
         finally:
             if os.path.exists(path):
                 os.remove(path)
 
     return {
+        "status": True,
         "count": len(results),
         "results": results
     }
